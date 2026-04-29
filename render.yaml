@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: nexabot-video-api
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn server:app
+    envVars:
+      - key: PIXABAY_API_KEY
+        value: 55575290-329752efa37512543a3df3950
