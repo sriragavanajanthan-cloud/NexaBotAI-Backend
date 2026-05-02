@@ -3,7 +3,7 @@ import sys
 import os
 import re
 import tempfile
-from moviepy import VideoFileClip, concatenate_videoclips
+from moviepy.editor import VideoFileClip, concatenate_videoclips
 
 PIXABAY_API_KEY = "55575290-329752efa37512543a3df3950"
 
