@@ -3,6 +3,9 @@ from flask_cors import CORS
 import requests
 import os
 import tempfile
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from video_assembler import get_video_options, create_video_from_option
 
 app = Flask(__name__)
@@ -36,7 +39,6 @@ def search():
 
 @app.route('/options', methods=['POST'])
 def options():
-    """Get video options for a topic"""
     data = request.json
     topic = data.get('topic', '')
     max_options = data.get('max_options', 6)
@@ -44,12 +46,11 @@ def options():
     if not topic:
         return jsonify({"error": "No topic provided"}), 400
     
-    options = get_video_options(topic, max_options=max_options)
-    return jsonify({"options": options})
+    opts = get_video_options(topic, max_options=max_options)
+    return jsonify({"options": opts})
 
 @app.route('/assemble', methods=['POST'])
 def assemble():
-    """Create video from selected option"""
     data = request.json
     topic = data.get('topic', '')
     video_url = data.get('video_url', '')
@@ -60,9 +61,6 @@ def assemble():
     
     try:
         output_path = create_video_from_option(video_url, topic, duration)
-        
-        # In production, you'd upload to cloud storage and return a public URL
-        # For now, return a local path (or use a temporary public URL)
         return jsonify({
             "video_url": f"/download/{os.path.basename(output_path)}",
             "duration": duration,
