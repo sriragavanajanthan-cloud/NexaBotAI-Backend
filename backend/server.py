@@ -1,9 +1,16 @@
+import sys
+import os
+
+# Add the backend directory to Python path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import os
 import datetime
-from video_assembler import get_video_options, create_video_from_option
 from supabase import create_client
+
+# Now import from the same directory
+from video_assembler import get_video_options, create_video_from_option
 
 app = Flask(__name__)
 CORS(app)
