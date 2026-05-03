@@ -63,12 +63,11 @@ def cleanup():
             if age > 86400:  # 24 hours
                 supabase.storage.from_(bucket).remove([file['name']])
                 deleted += 1
-        except Exception as e:
-            # Skip individual file errors, continue with next file
+        except Exception:
             continue
     
-    # Return minimal response to avoid cron-job.org size limit
-    return jsonify({"deleted": deleted}), 200
+    # Return minimal response (just the count) to stay under cron-job.org limit
+    return str(deleted), 200, {'Content-Type': 'text/plain'}
 
 @app.route('/health', methods=['GET'])
 def health():
