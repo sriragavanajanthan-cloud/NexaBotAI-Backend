@@ -1,15 +1,11 @@
 import sys
 import os
-
-# Add the backend directory to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import datetime
 from supabase import create_client
-
-# Now import from the same directory
 from video_assembler import get_video_options, create_video_from_option
 
 app = Flask(__name__)
@@ -51,19 +47,27 @@ def cleanup():
         return jsonify({"error": "Unauthorized"}), 401
     if not supabase:
         return jsonify({"error": "Supabase not configured"}), 500
+    
     bucket = "video-outputs"
     try:
         files = supabase.storage.from_(bucket).list()
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
     now = datetime.datetime.utcnow()
     deleted = 0
     for file in files:
-        created = datetime.datetime.fromisoformat(file['created_at'].replace('Z', '+00:00'))
-        age = (now - created).total_seconds()
-        if age > 86400:  # 24 hours
-            supabase.storage.from_(bucket).remove([file['name']])
-            deleted += 1
+        try:
+            created = datetime.datetime.fromisoformat(file['created_at'].replace('Z', '+00:00'))
+            age = (now - created).total_seconds()
+            if age > 86400:  # 24 hours
+                supabase.storage.from_(bucket).remove([file['name']])
+                deleted += 1
+        except Exception as e:
+            # Skip individual file errors, continue with next file
+            continue
+    
+    # Return minimal response to avoid cron-job.org size limit
     return jsonify({"deleted": deleted}), 200
 
 @app.route('/health', methods=['GET'])
