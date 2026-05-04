@@ -16,6 +16,14 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 CLEANUP_SECRET = os.environ.get("CLEANUP_SECRET", "default-secret-change-me")
 
+# Quality to resolution mapping
+QUALITY_SETTINGS = {
+    "draft": {"min_width": 640, "min_height": 360, "label": "540p", "crf": 32, "preset": "fast"},
+    "standard": {"min_width": 1280, "min_height": 720, "label": "720p", "crf": 28, "preset": "fast"},
+    "hd": {"min_width": 1920, "min_height": 1080, "label": "1080p", "crf": 23, "preset": "medium"},
+    "cinematic": {"min_width": 1920, "min_height": 1080, "label": "1080p", "crf": 23, "preset": "medium"}
+}
+
 @app.route('/options', methods=['POST'])
 def options():
     data = request.json
@@ -32,12 +40,47 @@ def assemble():
     topic = data.get('topic', '')
     video_url = data.get('video_url', '')
     duration = data.get('duration', 5)
+    quality = data.get('quality', 'standard')
+    aspect_ratio = data.get('aspectRatio', '16:9')
+    style = data.get('style', 'cinematic')
+    music_url = data.get('music', None)
+    text_overlay = data.get('text_overlay', None)
+    
     if not topic or not video_url:
         return jsonify({"error": "Missing topic or video_url"}), 400
+    
+    # Enforce memory-safe duration limit (30 seconds max for Render)
+    if duration < 2:
+        return jsonify({"error": "Duration must be at least 2 seconds"}), 400
+    if duration > 30:
+        return jsonify({"error": "Duration cannot exceed 30 seconds due to server memory limits"}), 400
+    
     try:
-        video_path = create_video_from_option(video_url, topic, duration)
-        return jsonify({"video_url": video_path, "duration": duration, "message": "Video created"})
+        # Get quality settings
+        quality_settings = QUALITY_SETTINGS.get(quality, QUALITY_SETTINGS["standard"])
+        resolution = quality_settings["label"]
+        
+        print(f"Processing video: {duration}s, quality: {quality}, style: {style}")
+        
+        # Create the video with memory optimizations
+        video_path = create_video_from_option(
+            video_url=video_url,
+            topic=topic,
+            duration=duration,
+            music_url=music_url,
+            text_overlay=text_overlay,
+            quality_settings=quality_settings
+        )
+        
+        return jsonify({
+            "video_url": video_path,
+            "duration": duration,
+            "resolution": resolution,
+            "style": style,
+            "message": "Video created successfully"
+        })
     except Exception as e:
+        print(f"Assembly error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/cleanup', methods=['POST'])
@@ -66,12 +109,11 @@ def cleanup():
         except Exception:
             continue
     
-    # Return minimal response (just the count) to stay under cron-job.org limit
     return str(deleted), 200, {'Content-Type': 'text/plain'}
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "message": "Video API is running"})
 
 if __name__ == '__main__':
     app.run(port=5001, debug=True)

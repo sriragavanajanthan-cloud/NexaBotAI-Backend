@@ -3,82 +3,194 @@ import os
 import tempfile
 import uuid
 import requests
+import re
+import gc
 from supabase import create_client
 
-# Supabase configuration (from environment variables)
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
-def download_video(url, output_path):
-    """Download video from URL"""
+PIXABAY_API_KEY = "55575290-329752efa37512543a3df3950"
+
+def download_file(url, output_path):
+    """Download a file from URL with chunking to save memory"""
     r = requests.get(url, stream=True)
     with open(output_path, 'wb') as f:
-        for chunk in r.iter_content(8192):
+        for chunk in r.iter_content(chunk_size=16384):  # 16KB chunks
             f.write(chunk)
     return output_path
 
-def trim_video_ffmpeg(input_path, output_path, duration):
+def trim_video_ffmpeg(input_path, output_path, duration, quality_settings=None):
     """Trim video using FFmpeg - memory efficient"""
-    cmd = ["ffmpeg", "-y", "-i", input_path, "-t", str(duration), "-c", "copy", output_path]
+    if quality_settings:
+        crf = quality_settings.get("crf", 28)
+        preset = quality_settings.get("preset", "fast")
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-t", str(duration),
+            "-c:v", "libx264",
+            "-crf", str(crf),
+            "-preset", preset,
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
+            output_path
+        ]
+    else:
+        # Fast copy mode for draft quality (no re-encoding)
+        cmd = ["ffmpeg", "-y", "-i", input_path, "-t", str(duration), "-c", "copy", output_path]
+    
     subprocess.run(cmd, check=True, capture_output=True)
     return output_path
 
-def create_video_from_option(video_url, topic, duration=5):
-    """Download, trim, upload to Supabase, return URL, delete local files"""
+def add_music_to_video(video_path, music_url, output_path):
+    """Add background music to video with memory optimization"""
+    if not music_url or music_url == "null" or music_url == "None":
+        import shutil
+        shutil.copy2(video_path, output_path)
+        return output_path
+    
+    # Download music file
+    music_path = tempfile.mktemp(suffix='.mp3')
+    try:
+        download_file(music_url, music_path)
+        
+        # Mix audio: video original audio + background music (volume reduced)
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", music_path,
+            "-filter_complex", "[1:a]volume=0.25[a1];[0:a][a1]amix=inputs=2:duration=first",
+            "-c:v", "copy",
+            "-max_muxing_queue_size", "1024",
+            output_path
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+    finally:
+        # Cleanup music file
+        if os.path.exists(music_path):
+            os.unlink(music_path)
+    
+    return output_path
+
+def add_text_overlay(video_path, text, output_path):
+    """Add text overlay to video using FFmpeg"""
+    if not text:
+        import shutil
+        shutil.copy2(video_path, output_path)
+        return output_path
+    
+    # Escape text for FFmpeg
+    text_escaped = text.replace("'", "'\\''").replace('"', '\\"')
+    
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-vf", f"drawtext=text='{text_escaped}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=(w-text_w)/2:y=h-text_h-20",
+        "-c:a", "copy",
+        "-max_muxing_queue_size", "1024",
+        output_path
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return output_path
+
+def create_video_from_option(video_url, topic, duration=5, music_url=None, text_overlay=None, quality_settings=None):
+    """Download, trim, add music, add text, upload to Supabase, return URL"""
     if not supabase:
         raise RuntimeError("Supabase client not initialized")
     
-    # Download
-    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp_in:
-        input_path = tmp_in.name
-    download_video(video_url, input_path)
+    # Create temp directory
+    temp_dir = tempfile.mkdtemp()
+    temp_files = []
     
-    # Trim
-    with tempfile.NamedTemporaryFile(suffix='_trimmed.mp4', delete=False) as tmp_out:
-        output_path = tmp_out.name
-    trim_video_ffmpeg(input_path, output_path, duration)
-    
-    # Upload to Supabase
-    bucket = "video-outputs"
-    unique_name = f"{uuid.uuid4()}.mp4"
-    with open(output_path, 'rb') as f:
-        supabase.storage.from_(bucket).upload(unique_name, f)
-    
-    # Get public URL
-    public_url = supabase.storage.from_(bucket).get_public_url(unique_name)
-    
-    # Cleanup local files
-    os.unlink(input_path)
-    os.unlink(output_path)
-    
-    return public_url
+    try:
+        # Step 1: Download original video
+        input_path = os.path.join(temp_dir, 'downloaded.mp4')
+        temp_files.append(input_path)
+        print(f"Downloading video...")
+        download_file(video_url, input_path)
+        
+        # Step 2: Trim video (with or without re-encoding)
+        trimmed_path = os.path.join(temp_dir, 'trimmed.mp4')
+        temp_files.append(trimmed_path)
+        print(f"Trimming to {duration} seconds...")
+        trim_video_ffmpeg(input_path, trimmed_path, duration, quality_settings)
+        
+        # Force garbage collection after trim
+        gc.collect()
+        
+        # Step 3: Add music (if provided)
+        with_music_path = os.path.join(temp_dir, 'with_music.mp4')
+        temp_files.append(with_music_path)
+        print(f"Adding music...")
+        add_music_to_video(trimmed_path, music_url, with_music_path)
+        
+        # Force garbage collection
+        gc.collect()
+        
+        # Step 4: Add text overlay (if provided)
+        final_path = os.path.join(temp_dir, 'final.mp4')
+        temp_files.append(final_path)
+        print(f"Adding text overlay...")
+        add_text_overlay(with_music_path, text_overlay, final_path)
+        
+        # Step 5: Upload to Supabase
+        bucket = "video-outputs"
+        unique_name = f"{uuid.uuid4()}.mp4"
+        with open(final_path, 'rb') as f:
+            supabase.storage.from_(bucket).upload(unique_name, f)
+        
+        # Step 6: Get public URL
+        public_url = supabase.storage.from_(bucket).get_public_url(unique_name)
+        
+        print(f"✅ Video uploaded: {public_url}")
+        return public_url
+        
+    finally:
+        # Cleanup temp files
+        for file_path in temp_files:
+            if os.path.exists(file_path):
+                try:
+                    os.unlink(file_path)
+                except:
+                    pass
+        try:
+            os.rmdir(temp_dir)
+        except:
+            pass
+        # Force garbage collection
+        gc.collect()
 
 def search_pixabay_videos(keyword, per_page=6):
-    import requests
-    PIXABAY_API_KEY = "55575290-329752efa37512543a3df3950"
+    """Search for videos on Pixabay"""
     url = f"https://pixabay.com/api/videos/?key={PIXABAY_API_KEY}&q={keyword}&per_page={per_page}&video_type=film"
-    response = requests.get(url)
-    data = response.json()
-    videos = []
-    for hit in data.get('hits', []):
-        vid = hit.get('videos', {})
-        video_url = vid.get('medium', {}).get('url') or vid.get('small', {}).get('url')
-        if video_url:
-            videos.append({
-                'url': video_url,
-                'duration': hit.get('duration', 0),
-                'tags': hit.get('tags', ''),
-                'width': vid.get('medium', {}).get('width', 0),
-                'height': vid.get('medium', {}).get('height', 0)
-            })
-    return videos
+    try:
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        videos = []
+        for hit in data.get('hits', []):
+            vid = hit.get('videos', {})
+            video_url = vid.get('medium', {}).get('url') or vid.get('small', {}).get('url')
+            if video_url:
+                videos.append({
+                    'url': video_url,
+                    'duration': hit.get('duration', 0),
+                    'tags': hit.get('tags', ''),
+                    'width': vid.get('medium', {}).get('width', 0),
+                    'height': vid.get('medium', {}).get('height', 0)
+                })
+        return videos
+    except Exception as e:
+        print(f"Search error: {e}")
+        return []
 
 def get_video_options(topic, max_options=6):
-    import re
-    keywords = re.findall(r'\b[a-zA-Z]{3,}\b', topic.lower())
+    """Get video options for a topic"""
+    words = re.findall(r'\b[a-zA-Z]{3,}\b', topic.lower())
     stop_words = {'the', 'and', 'for', 'with', 'that', 'this', 'from', 'have', 'are', 'was', 'were', 'been', 'can', 'will', 'would', 'could', 'should'}
-    keywords = [w for w in keywords if w not in stop_words]
+    keywords = [w for w in words if w not in stop_words]
     search_term = ' '.join(keywords[:3]) if keywords else topic
     videos = search_pixabay_videos(search_term, per_page=max_options + 2)
     options = []
