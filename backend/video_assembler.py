@@ -576,3 +576,107 @@ def detect_scenes(video_path):
                 scenes.append(float(match.group(1)))
     
     return scenes
+
+# Add missing imports and functions for effects
+import uuid
+
+def create_multi_clip_video(video_urls, topic, duration_per_clip=5, quality_settings=None):
+    """Create a video from multiple clips"""
+    temp_dir = tempfile.mkdtemp()
+    temp_files = []
+    
+    try:
+        clip_paths = download_multiple_videos(video_urls, temp_dir)
+        temp_files.extend(clip_paths)
+        
+        trimmed_paths = []
+        for i, clip_path in enumerate(clip_paths):
+            trimmed_path = os.path.join(temp_dir, f'trimmed_{i}.mp4')
+            temp_files.append(trimmed_path)
+            trim_video_ffmpeg(clip_path, trimmed_path, duration_per_clip, quality_settings)
+            trimmed_paths.append(trimmed_path)
+        
+        concat_path = os.path.join(temp_dir, 'concatenated.mp4')
+        temp_files.append(concat_path)
+        concatenate_videos(trimmed_paths, concat_path)
+        
+        bucket = "video-outputs"
+        unique_name = f"{uuid.uuid4()}.mp4"
+        with open(concat_path, 'rb') as f:
+            supabase.storage.from_(bucket).upload(unique_name, f)
+        
+        return supabase.storage.from_(bucket).get_public_url(unique_name)
+        
+    finally:
+        for file_path in temp_files:
+            if os.path.exists(file_path):
+                try:
+                    os.unlink(file_path)
+                except:
+                    pass
+        try:
+            os.rmdir(temp_dir)
+        except:
+            pass
+
+def download_multiple_videos(video_urls, temp_dir):
+    downloaded_paths = []
+    for i, url in enumerate(video_urls):
+        path = os.path.join(temp_dir, f'clip_{i}.mp4')
+        download_file(url, path)
+        downloaded_paths.append(path)
+    return downloaded_paths
+
+def add_ken_burns_effect(input_path, output_path, zoom=0.1):
+    scale = 1 + zoom
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-vf", f"scale=iw*{scale}:ih*{scale},crop=iw/{scale}:ih/{scale}",
+        "-c:a", "copy",
+        output_path
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return output_path
+
+def adjust_speed(input_path, output_path, speed_factor=1.0):
+    if speed_factor == 1.0:
+        import shutil
+        shutil.copy2(input_path, output_path)
+        return output_path
+    
+    pts_value = 1.0 / speed_factor
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-filter_complex", f"[0:v]setpts={pts_value}*PTS[v];[0:a]atempo={speed_factor}[a]",
+        "-map", "[v]",
+        "-map", "[a]",
+        output_path
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return output_path
+
+def concatenate_videos(video_paths, output_path):
+    if len(video_paths) == 1:
+        import shutil
+        shutil.copy2(video_paths[0], output_path)
+        return output_path
+    
+    concat_file = os.path.join(os.path.dirname(output_path), 'concat_list.txt')
+    with open(concat_file, 'w') as f:
+        for path in video_paths:
+            f.write(f"file '{path}'\n")
+    
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", concat_file,
+        "-c", "copy",
+        output_path
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    
+    os.unlink(concat_file)
+    return output_path
