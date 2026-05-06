@@ -9,6 +9,7 @@ import time
 import requests
 from supabase import create_client
 from video_assembler import get_video_options, create_video_from_option
+from music_library import get_tracks_by_mood, get_track_info, LIBRARY_STATS
 
 app = Flask(__name__)
 
@@ -32,9 +33,6 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 CLEANUP_SECRET = os.environ.get("CLEANUP_SECRET", "default-secret-change-me")
 
-# Pixabay API Key - Move to environment variable in production
-PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY", "55575290-329752efa37512543a3df3950")
-
 QUALITY_SETTINGS = {
     "draft": {"label": "540p", "crf": 32, "preset": "fast"},
     "standard": {"label": "720p", "crf": 28, "preset": "fast"},
@@ -52,123 +50,46 @@ def after_request(response):
 
 @app.route('/search-music', methods=['POST', 'OPTIONS'])
 def search_music():
-    """Search for royalty-free music and sound effects from Pixabay Audio API"""
+    """Search for royalty-free music from local music library"""
     if request.method == 'OPTIONS':
         return '', 200
     
     data = request.json
-    query = data.get('query', '')
     mood = data.get('mood', 'upbeat')
     
-    # Map moods to search terms for better results
-    mood_terms = {
-        'upbeat': 'upbeat energetic music',
-        'cinematic': 'cinematic orchestral music',
-        'calm': 'calm relaxing meditation music',
-        'inspiring': 'inspiring motivational music',
-        'corporate': 'corporate business music'
-    }
+    # Get tracks from your music library
+    track_urls = get_tracks_by_mood(mood, limit=10)
     
-    # Use query if provided, otherwise use mood mapping
-    search_term = mood_terms.get(mood, query) if not query else query
+    tracks = []
+    for i, url in enumerate(track_urls):
+        tracks.append({
+            'id': i,
+            'title': get_track_info(url),
+            'url': url,
+            'duration': 120,
+            'artist': 'Mixkit/SoundHelix',
+            'license': 'Royalty-Free for Commercial Use'
+        })
     
-    # CORRECT API ENDPOINT for audio/sound effects
-    url = "https://pixabay.com/api/audiocode/"
-    params = {
-        'key': PIXABAY_API_KEY,
-        'q': search_term,
-        'per_page': 8
-    }
-    
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        audio_tracks = []
-        for hit in data.get('hits', []):
-            # Handle different possible URL field names
-            audio_url = hit.get('audio_url') or hit.get('url') or hit.get('preview_url')
-            if audio_url:
-                audio_tracks.append({
-                    'id': hit.get('id'),
-                    'title': hit.get('title', 'Untitled'),
-                    'url': audio_url,
-                    'duration': hit.get('duration', 30),
-                    'tags': hit.get('tags', ''),
-                    'artist': hit.get('user', 'Pixabay')
-                })
-        
-        # Fallback: If no results, try generic background music
-        if not audio_tracks:
-            fallback_params = {
-                'key': PIXABAY_API_KEY,
-                'q': 'background music',
-                'per_page': 5
-            }
-            fb_response = requests.get(url, params=fallback_params, timeout=10)
-            fb_data = fb_response.json()
-            for hit in fb_data.get('hits', []):
-                audio_url = hit.get('audio_url') or hit.get('url') or hit.get('preview_url')
-                if audio_url:
-                    audio_tracks.append({
-                        'id': hit.get('id'),
-                        'title': hit.get('title', 'Background Music'),
-                        'url': audio_url,
-                        'duration': hit.get('duration', 30),
-                        'tags': hit.get('tags', ''),
-                        'artist': hit.get('user', 'Pixabay')
-                    })
-        
-        return jsonify({"tracks": audio_tracks, "count": len(audio_tracks)})
-        
-    except requests.exceptions.RequestException as e:
-        print(f"Pixabay API error: {e}")
-        return jsonify({"error": f"Failed to fetch audio: {str(e)}", "tracks": []}), 500
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-        return jsonify({"error": str(e), "tracks": []}), 500
+    return jsonify({
+        "tracks": tracks,
+        "count": len(tracks),
+        "source": "Mixkit + SoundHelix Library",
+        "total_available": LIBRARY_STATS['total_tracks'],
+        "moods_available": LIBRARY_STATS['moods']
+    })
 
 @app.route('/search-sound-effects', methods=['POST', 'OPTIONS'])
 def search_sound_effects():
-    """Search specifically for sound effects (shorter clips, foley, etc.)"""
+    """Search for sound effects (coming soon)"""
     if request.method == 'OPTIONS':
         return '', 200
     
-    data = request.json
-    query = data.get('query', '')
-    
-    if not query:
-        return jsonify({"error": "No search query provided", "effects": []}), 400
-    
-    url = "https://pixabay.com/api/audiocode/"
-    params = {
-        'key': PIXABAY_API_KEY,
-        'q': query,
-        'per_page': 12
-    }
-    
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        sound_effects = []
-        for hit in data.get('hits', []):
-            audio_url = hit.get('audio_url') or hit.get('url') or hit.get('preview_url')
-            if audio_url:
-                sound_effects.append({
-                    'id': hit.get('id'),
-                    'title': hit.get('title', 'Sound Effect'),
-                    'url': audio_url,
-                    'duration': hit.get('duration', 5),
-                    'tags': hit.get('tags', '')
-                })
-        
-        return jsonify({"effects": sound_effects, "count": len(sound_effects)})
-    except Exception as e:
-        print(f"Sound effects error: {e}")
-        return jsonify({"error": str(e), "effects": []}), 500
+    return jsonify({
+        "effects": [],
+        "message": "Sound effects coming soon. Use /search-music for background music.",
+        "source": "Local Library"
+    })
 
 @app.route('/options', methods=['POST', 'OPTIONS'])
 def get_options():
@@ -249,51 +170,6 @@ def assemble_multi():
         print(f"Multi-clip error: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/add-effect', methods=['POST', 'OPTIONS'])
-def add_effect():
-    if request.method == 'OPTIONS':
-        return '', 200
-    data = request.json
-    video_url = data.get('video_url', '')
-    effect = data.get('effect', 'ken_burns')
-    speed = data.get('speed', 0.5)
-    
-    if not video_url:
-        return jsonify({"error": "Missing video_url"}), 400
-    
-    import tempfile
-    from video_assembler import download_file, add_ken_burns_effect, adjust_speed
-    import uuid
-    
-    temp_dir = tempfile.mkdtemp()
-    input_path = os.path.join(temp_dir, 'input.mp4')
-    download_file(video_url, input_path)
-    
-    output_path = os.path.join(temp_dir, 'output.mp4')
-    
-    if effect == 'ken_burns':
-        add_ken_burns_effect(input_path, output_path, zoom=0.1)
-    elif effect == 'slow_motion':
-        adjust_speed(input_path, output_path, speed_factor=speed)
-    elif effect == 'time_lapse':
-        adjust_speed(input_path, output_path, speed_factor=speed)
-    else:
-        return jsonify({"error": f"Unknown effect: {effect}"}), 400
-    
-    bucket = "video-outputs"
-    unique_name = f"{uuid.uuid4()}.mp4"
-    with open(output_path, 'rb') as f:
-        supabase.storage.from_(bucket).upload(unique_name, f)
-    
-    public_url = supabase.storage.from_(bucket).get_public_url(unique_name)
-    
-    # Cleanup
-    os.unlink(input_path)
-    os.unlink(output_path)
-    os.rmdir(temp_dir)
-    
-    return jsonify({"video_url": public_url, "effect": effect})
-
 @app.route('/cleanup', methods=['POST', 'OPTIONS'])
 def cleanup():
     if request.method == 'OPTIONS':
@@ -316,7 +192,7 @@ def cleanup():
         try:
             created = datetime.datetime.fromisoformat(file['created_at'].replace('Z', '+00:00'))
             age = (now - created).total_seconds()
-            if age > 86400:  # 24 hours
+            if age > 86400:
                 supabase.storage.from_(bucket).remove([file['name']])
                 deleted += 1
         except Exception:
@@ -330,17 +206,19 @@ def health():
         return '', 200
     return jsonify({
         "status": "ok",
-        "message": "Video API is running",
+        "message": "Video API is running with local music library",
         "endpoints": [
             "/search-music",
             "/search-sound-effects",
             "/options",
             "/assemble",
             "/assemble-multi",
-            "/add-effect",
             "/cleanup",
             "/health"
-        ]
+        ],
+        "music_source": "Mixkit + SoundHelix",
+        "total_tracks": LIBRARY_STATS['total_tracks'],
+        "moods_available": LIBRARY_STATS['moods']
     })
 
 if __name__ == '__main__':
