@@ -13,16 +13,13 @@ from music_library import get_tracks_by_mood, get_track_info, LIBRARY_STATS
 
 app = Flask(__name__)
 
-# Fix CORS - Allow all origins for testing
-CORS(app, resources={
-    r"/*": {
-        "origins": "*",
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization", "X-Cleanup-Secret"],
-        "expose_headers": ["Content-Type"],
-        "supports_credentials": True
-    }
-})
+# Enable CORS for all routes with proper configuration
+CORS(app, 
+     resources={r"/*": {"origins": "*"}},
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     allow_headers=["Content-Type", "Authorization", "X-Cleanup-Secret"],
+     expose_headers=["Content-Type"],
+     supports_credentials=True)
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
@@ -36,22 +33,24 @@ QUALITY_SETTINGS = {
     "cinematic": {"label": "1080p", "crf": 23, "preset": "medium"}
 }
 
-# Add CORS headers to every response
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Cleanup-Secret')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Cleanup-Secret'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     return response
 
-@app.route('/search-music', methods=['POST', 'OPTIONS'])
+@app.route('/search-music', methods=['GET', 'POST', 'OPTIONS'])
 def search_music():
     if request.method == 'OPTIONS':
         return '', 200
     
-    data = request.json
-    mood = data.get('mood', 'upbeat')
+    # Handle both GET and POST
+    if request.method == 'GET':
+        mood = request.args.get('mood', 'upbeat')
+    else:
+        data = request.json or {}
+        mood = data.get('mood', 'upbeat')
     
     track_urls = get_tracks_by_mood(mood, limit=10)
     
@@ -74,14 +73,17 @@ def search_music():
         "moods_available": LIBRARY_STATS['moods']
     })
 
-@app.route('/search-sound-effects', methods=['POST', 'OPTIONS'])
-def search_sound_effects():
+@app.route('/health', methods=['GET', 'OPTIONS'])
+def health():
     if request.method == 'OPTIONS':
         return '', 200
     return jsonify({
-        "effects": [],
-        "message": "Sound effects coming soon. Use /search-music for background music.",
-        "source": "Local Library"
+        "status": "ok",
+        "message": "Video API is running with local music library",
+        "endpoints": ["/search-music", "/options", "/assemble", "/health"],
+        "music_source": "Mixkit + SoundHelix",
+        "total_tracks": LIBRARY_STATS['total_tracks'],
+        "moods_available": LIBRARY_STATS['moods']
     })
 
 @app.route('/options', methods=['POST', 'OPTIONS'])
@@ -115,9 +117,9 @@ def assemble():
     if duration < 2 or duration > 30:
         return jsonify({"error": "Duration must be between 2 and 30 seconds"}), 400
     
-    # Fix music URL - if it's a relative path, use a default
-    if music_url and music_url.startswith('/'):
-        music_url = None  # Skip invalid music URLs
+    # Skip invalid music URLs
+    if music_url and (music_url.startswith('/') or 'invalid' in music_url):
+        music_url = None
     
     try:
         quality_settings = QUALITY_SETTINGS.get(quality, QUALITY_SETTINGS["standard"])
@@ -140,132 +142,6 @@ def assemble():
     except Exception as e:
         print(f"Assembly error: {e}")
         return jsonify({"error": str(e)}), 500
-
-@app.route('/assemble-multi', methods=['POST', 'OPTIONS'])
-def assemble_multi():
-    if request.method == 'OPTIONS':
-        return '', 200
-    data = request.json
-    video_urls = data.get('video_urls', [])
-    duration_per_clip = data.get('duration_per_clip', 5)
-    quality = data.get('quality', 'standard')
-    
-    if not video_urls or len(video_urls) < 2:
-        return jsonify({"error": "Need at least 2 video URLs"}), 400
-    
-    quality_settings = QUALITY_SETTINGS.get(quality, QUALITY_SETTINGS["standard"])
-    
-    try:
-        from video_assembler import create_multi_clip_video
-        video_path = create_multi_clip_video(
-            video_urls=video_urls,
-            topic="multi_clip_video",
-            duration_per_clip=duration_per_clip,
-            quality_settings=quality_settings
-        )
-        return jsonify({"video_url": video_path, "message": "Multi-clip video created successfully"})
-    except Exception as e:
-        print(f"Multi-clip error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/add-effect', methods=['POST', 'OPTIONS'])
-def add_effect():
-    if request.method == 'OPTIONS':
-        return '', 200
-    data = request.json
-    video_url = data.get('video_url', '')
-    effect = data.get('effect', 'ken_burns')
-    speed = data.get('speed', 0.5)
-    
-    if not video_url:
-        return jsonify({"error": "Missing video_url"}), 400
-    
-    if not supabase:
-        return jsonify({"error": "Supabase not configured"}), 500
-    
-    import tempfile
-    from video_assembler import download_file, add_ken_burns_effect, adjust_speed
-    import uuid
-    
-    temp_dir = tempfile.mkdtemp()
-    input_path = os.path.join(temp_dir, 'input.mp4')
-    download_file(video_url, input_path)
-    
-    output_path = os.path.join(temp_dir, 'output.mp4')
-    
-    if effect == 'ken_burns':
-        add_ken_burns_effect(input_path, output_path, zoom=0.1)
-    elif effect == 'slow_motion':
-        adjust_speed(input_path, output_path, speed_factor=speed)
-    elif effect == 'time_lapse':
-        adjust_speed(input_path, output_path, speed_factor=speed)
-    else:
-        return jsonify({"error": f"Unknown effect: {effect}"}), 400
-    
-    bucket = "video-outputs"
-    unique_name = f"{uuid.uuid4()}.mp4"
-    with open(output_path, 'rb') as f:
-        supabase.storage.from_(bucket).upload(unique_name, f)
-    
-    public_url = supabase.storage.from_(bucket).get_public_url(unique_name)
-    
-    os.unlink(input_path)
-    os.unlink(output_path)
-    os.rmdir(temp_dir)
-    
-    return jsonify({"video_url": public_url, "effect": effect})
-
-@app.route('/cleanup', methods=['POST', 'OPTIONS'])
-def cleanup():
-    if request.method == 'OPTIONS':
-        return '', 200
-    auth = request.headers.get('X-Cleanup-Secret')
-    if auth != CLEANUP_SECRET:
-        return jsonify({"error": "Unauthorized"}), 401
-    if not supabase:
-        return jsonify({"error": "Supabase not configured"}), 500
-    
-    bucket = "video-outputs"
-    try:
-        files = supabase.storage.from_(bucket).list()
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    
-    now = datetime.datetime.utcnow()
-    deleted = 0
-    for file in files:
-        try:
-            created = datetime.datetime.fromisoformat(file['created_at'].replace('Z', '+00:00'))
-            age = (now - created).total_seconds()
-            if age > 86400:
-                supabase.storage.from_(bucket).remove([file['name']])
-                deleted += 1
-        except Exception:
-            continue
-    
-    return str(deleted), 200, {'Content-Type': 'text/plain'}
-
-@app.route('/health', methods=['GET', 'OPTIONS'])
-def health():
-    if request.method == 'OPTIONS':
-        return '', 200
-    return jsonify({
-        "status": "ok",
-        "message": "Video API is running with local music library",
-        "endpoints": [
-            "/search-music",
-            "/search-sound-effects",
-            "/options",
-            "/assemble",
-            "/assemble-multi",
-            "/add-effect",
-            "/cleanup",
-            "/health"
-        ],
-        "music_source": "Mixkit + SoundHelix",
-        "total_tracks": LIBRARY_STATS['total_tracks'],
-        "moods_available": LIBRARY_STATS['moods']
-    })
 
 if __name__ == '__main__':
     app.run(port=5001, debug=False, threaded=False)
