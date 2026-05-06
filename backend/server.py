@@ -6,6 +6,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import datetime
 import time
+import requests
 from supabase import create_client
 from video_assembler import get_video_options, create_video_from_option
 
@@ -31,6 +32,9 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 CLEANUP_SECRET = os.environ.get("CLEANUP_SECRET", "default-secret-change-me")
 
+# Pixabay API Key - Move to environment variable in production
+PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY", "55575290-329752efa37512543a3df3950")
+
 QUALITY_SETTINGS = {
     "draft": {"label": "540p", "crf": 32, "preset": "fast"},
     "standard": {"label": "720p", "crf": 28, "preset": "fast"},
@@ -48,6 +52,7 @@ def after_request(response):
 
 @app.route('/search-music', methods=['POST', 'OPTIONS'])
 def search_music():
+    """Search for royalty-free music and sound effects from Pixabay Audio API"""
     if request.method == 'OPTIONS':
         return '', 200
     
@@ -55,37 +60,115 @@ def search_music():
     query = data.get('query', '')
     mood = data.get('mood', 'upbeat')
     
-    PIXABAY_API_KEY = "55575290-329752efa37512543a3df3950"
-    
+    # Map moods to search terms for better results
     mood_terms = {
-        'upbeat': 'upbeat energetic',
-        'cinematic': 'cinematic orchestral',
-        'calm': 'calm relaxing meditation',
-        'inspiring': 'inspiring motivational',
-        'corporate': 'corporate business'
+        'upbeat': 'upbeat energetic music',
+        'cinematic': 'cinematic orchestral music',
+        'calm': 'calm relaxing meditation music',
+        'inspiring': 'inspiring motivational music',
+        'corporate': 'corporate business music'
     }
     
+    # Use query if provided, otherwise use mood mapping
     search_term = mood_terms.get(mood, query) if not query else query
-    url = f"https://pixabay.com/api/music/?key={PIXABAY_API_KEY}&q={search_term}&per_page=8"
+    
+    # CORRECT API ENDPOINT for audio/sound effects
+    url = "https://pixabay.com/api/audiocode/"
+    params = {
+        'key': PIXABAY_API_KEY,
+        'q': search_term,
+        'per_page': 8
+    }
     
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
         data = response.json()
         
-        music_tracks = []
+        audio_tracks = []
         for hit in data.get('hits', []):
-            music_tracks.append({
-                'id': hit.get('id'),
-                'title': hit.get('title'),
-                'url': hit.get('audio'),
-                'duration': hit.get('duration'),
-                'tags': hit.get('tags', ''),
-                'artist': hit.get('user', 'Pixabay')
-            })
+            # Handle different possible URL field names
+            audio_url = hit.get('audio_url') or hit.get('url') or hit.get('preview_url')
+            if audio_url:
+                audio_tracks.append({
+                    'id': hit.get('id'),
+                    'title': hit.get('title', 'Untitled'),
+                    'url': audio_url,
+                    'duration': hit.get('duration', 30),
+                    'tags': hit.get('tags', ''),
+                    'artist': hit.get('user', 'Pixabay')
+                })
         
-        return jsonify({"tracks": music_tracks})
+        # Fallback: If no results, try generic background music
+        if not audio_tracks:
+            fallback_params = {
+                'key': PIXABAY_API_KEY,
+                'q': 'background music',
+                'per_page': 5
+            }
+            fb_response = requests.get(url, params=fallback_params, timeout=10)
+            fb_data = fb_response.json()
+            for hit in fb_data.get('hits', []):
+                audio_url = hit.get('audio_url') or hit.get('url') or hit.get('preview_url')
+                if audio_url:
+                    audio_tracks.append({
+                        'id': hit.get('id'),
+                        'title': hit.get('title', 'Background Music'),
+                        'url': audio_url,
+                        'duration': hit.get('duration', 30),
+                        'tags': hit.get('tags', ''),
+                        'artist': hit.get('user', 'Pixabay')
+                    })
+        
+        return jsonify({"tracks": audio_tracks, "count": len(audio_tracks)})
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Pixabay API error: {e}")
+        return jsonify({"error": f"Failed to fetch audio: {str(e)}", "tracks": []}), 500
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Unexpected error: {e}")
+        return jsonify({"error": str(e), "tracks": []}), 500
+
+@app.route('/search-sound-effects', methods=['POST', 'OPTIONS'])
+def search_sound_effects():
+    """Search specifically for sound effects (shorter clips, foley, etc.)"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
+    data = request.json
+    query = data.get('query', '')
+    
+    if not query:
+        return jsonify({"error": "No search query provided", "effects": []}), 400
+    
+    url = "https://pixabay.com/api/audiocode/"
+    params = {
+        'key': PIXABAY_API_KEY,
+        'q': query,
+        'per_page': 12
+    }
+    
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        sound_effects = []
+        for hit in data.get('hits', []):
+            audio_url = hit.get('audio_url') or hit.get('url') or hit.get('preview_url')
+            if audio_url:
+                sound_effects.append({
+                    'id': hit.get('id'),
+                    'title': hit.get('title', 'Sound Effect'),
+                    'url': audio_url,
+                    'duration': hit.get('duration', 5),
+                    'tags': hit.get('tags', '')
+                })
+        
+        return jsonify({"effects": sound_effects, "count": len(sound_effects)})
+    except Exception as e:
+        print(f"Sound effects error: {e}")
+        return jsonify({"error": str(e), "effects": []}), 500
 
 @app.route('/options', methods=['POST', 'OPTIONS'])
 def get_options():
@@ -133,10 +216,10 @@ def assemble():
             "video_url": video_path,
             "duration": duration,
             "resolution": quality_settings["label"],
-            "message": "Video created"
+            "message": "Video created successfully"
         })
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Assembly error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/assemble-multi', methods=['POST', 'OPTIONS'])
@@ -161,8 +244,9 @@ def assemble_multi():
             duration_per_clip=duration_per_clip,
             quality_settings=quality_settings
         )
-        return jsonify({"video_url": video_path, "message": "Multi-clip video created"})
+        return jsonify({"video_url": video_path, "message": "Multi-clip video created successfully"})
     except Exception as e:
+        print(f"Multi-clip error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/add-effect', methods=['POST', 'OPTIONS'])
@@ -203,6 +287,7 @@ def add_effect():
     
     public_url = supabase.storage.from_(bucket).get_public_url(unique_name)
     
+    # Cleanup
     os.unlink(input_path)
     os.unlink(output_path)
     os.rmdir(temp_dir)
@@ -231,7 +316,7 @@ def cleanup():
         try:
             created = datetime.datetime.fromisoformat(file['created_at'].replace('Z', '+00:00'))
             age = (now - created).total_seconds()
-            if age > 86400:
+            if age > 86400:  # 24 hours
                 supabase.storage.from_(bucket).remove([file['name']])
                 deleted += 1
         except Exception:
@@ -243,7 +328,20 @@ def cleanup():
 def health():
     if request.method == 'OPTIONS':
         return '', 200
-    return jsonify({"status": "ok", "message": "Video API is running"})
+    return jsonify({
+        "status": "ok",
+        "message": "Video API is running",
+        "endpoints": [
+            "/search-music",
+            "/search-sound-effects",
+            "/options",
+            "/assemble",
+            "/assemble-multi",
+            "/add-effect",
+            "/cleanup",
+            "/health"
+        ]
+    })
 
 if __name__ == '__main__':
     app.run(port=5001, debug=False, threaded=False)
