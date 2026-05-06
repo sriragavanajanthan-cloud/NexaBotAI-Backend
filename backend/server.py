@@ -13,14 +13,10 @@ from music_library import get_tracks_by_mood, get_track_info, LIBRARY_STATS
 
 app = Flask(__name__)
 
+# Fix CORS - Allow all origins for testing
 CORS(app, resources={
     r"/*": {
-        "origins": [
-            "https://nexa-bot-ai.vercel.app",
-            "http://localhost:5173",
-            "http://localhost:5174",
-            "http://localhost:5175"
-        ],
+        "origins": "*",
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization", "X-Cleanup-Secret"],
         "expose_headers": ["Content-Type"],
@@ -40,9 +36,10 @@ QUALITY_SETTINGS = {
     "cinematic": {"label": "1080p", "crf": 23, "preset": "medium"}
 }
 
+# Add CORS headers to every response
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', 'https://nexa-bot-ai.vercel.app')
+    response.headers.add('Access-Control-Allow-Origin', '*')
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Cleanup-Secret')
     response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
     response.headers.add('Access-Control-Allow-Credentials', 'true')
@@ -50,14 +47,12 @@ def after_request(response):
 
 @app.route('/search-music', methods=['POST', 'OPTIONS'])
 def search_music():
-    """Search for royalty-free music from local music library"""
     if request.method == 'OPTIONS':
         return '', 200
     
     data = request.json
     mood = data.get('mood', 'upbeat')
     
-    # Get tracks from your music library
     track_urls = get_tracks_by_mood(mood, limit=10)
     
     tracks = []
@@ -81,10 +76,8 @@ def search_music():
 
 @app.route('/search-sound-effects', methods=['POST', 'OPTIONS'])
 def search_sound_effects():
-    """Search for sound effects (coming soon)"""
     if request.method == 'OPTIONS':
         return '', 200
-    
     return jsonify({
         "effects": [],
         "message": "Sound effects coming soon. Use /search-music for background music.",
@@ -107,6 +100,7 @@ def get_options():
 def assemble():
     if request.method == 'OPTIONS':
         return '', 200
+    
     data = request.json
     topic = data.get('topic', '')
     video_url = data.get('video_url', '')
@@ -120,6 +114,10 @@ def assemble():
     
     if duration < 2 or duration > 30:
         return jsonify({"error": "Duration must be between 2 and 30 seconds"}), 400
+    
+    # Fix music URL - if it's a relative path, use a default
+    if music_url and music_url.startswith('/'):
+        music_url = None  # Skip invalid music URLs
     
     try:
         quality_settings = QUALITY_SETTINGS.get(quality, QUALITY_SETTINGS["standard"])
@@ -170,6 +168,53 @@ def assemble_multi():
         print(f"Multi-clip error: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/add-effect', methods=['POST', 'OPTIONS'])
+def add_effect():
+    if request.method == 'OPTIONS':
+        return '', 200
+    data = request.json
+    video_url = data.get('video_url', '')
+    effect = data.get('effect', 'ken_burns')
+    speed = data.get('speed', 0.5)
+    
+    if not video_url:
+        return jsonify({"error": "Missing video_url"}), 400
+    
+    if not supabase:
+        return jsonify({"error": "Supabase not configured"}), 500
+    
+    import tempfile
+    from video_assembler import download_file, add_ken_burns_effect, adjust_speed
+    import uuid
+    
+    temp_dir = tempfile.mkdtemp()
+    input_path = os.path.join(temp_dir, 'input.mp4')
+    download_file(video_url, input_path)
+    
+    output_path = os.path.join(temp_dir, 'output.mp4')
+    
+    if effect == 'ken_burns':
+        add_ken_burns_effect(input_path, output_path, zoom=0.1)
+    elif effect == 'slow_motion':
+        adjust_speed(input_path, output_path, speed_factor=speed)
+    elif effect == 'time_lapse':
+        adjust_speed(input_path, output_path, speed_factor=speed)
+    else:
+        return jsonify({"error": f"Unknown effect: {effect}"}), 400
+    
+    bucket = "video-outputs"
+    unique_name = f"{uuid.uuid4()}.mp4"
+    with open(output_path, 'rb') as f:
+        supabase.storage.from_(bucket).upload(unique_name, f)
+    
+    public_url = supabase.storage.from_(bucket).get_public_url(unique_name)
+    
+    os.unlink(input_path)
+    os.unlink(output_path)
+    os.rmdir(temp_dir)
+    
+    return jsonify({"video_url": public_url, "effect": effect})
+
 @app.route('/cleanup', methods=['POST', 'OPTIONS'])
 def cleanup():
     if request.method == 'OPTIONS':
@@ -213,6 +258,7 @@ def health():
             "/options",
             "/assemble",
             "/assemble-multi",
+            "/add-effect",
             "/cleanup",
             "/health"
         ],
