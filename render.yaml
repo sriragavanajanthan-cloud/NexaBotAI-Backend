@@ -2,10 +2,17 @@ services:
   - type: web
     name: nexabot-video-api
     runtime: python
+    repo: https://github.com/sriragavanajanthan-cloud/NexaBotAI-Backend
     plan: free
     region: oregon
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn backend.server:app
+    startCommand: cd backend && gunicorn server:app
     envVars:
-      - key: PIXABAY_API_KEY
-        value: 55575290-329752efa37512543a3df3950
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: CLEANUP_SECRET
+        sync: false
