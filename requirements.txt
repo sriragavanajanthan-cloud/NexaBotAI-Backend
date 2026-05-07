@@ -4,3 +4,4 @@ requests==2.31.0
 gunicorn==21.2.0
 moviepy==1.0.3
 supabase==2.5.1
+python-dotenv==1.0.0
