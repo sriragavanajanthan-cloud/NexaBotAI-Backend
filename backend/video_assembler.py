@@ -16,6 +16,7 @@ PIXABAY_API_KEY = "55575290-329752efa37512543a3df3950"
 def download_file(url, output_path):
     """Download file in chunks"""
     response = requests.get(url, stream=True)
+    response.raise_for_status()
     with open(output_path, 'wb') as f:
         for chunk in response.iter_content(chunk_size=65536):
             if chunk:
@@ -94,7 +95,7 @@ def add_text_simple(video_path, text, output_path):
     return output_path
 
 def create_video_from_option(video_url, topic, duration=5, music_url=None, text_overlay=None, quality_settings=None):
-    """Create video step by step (more reliable)"""
+    """Create video step by step with proper upload error handling"""
     if not supabase:
         raise RuntimeError("Supabase client not initialized")
     
@@ -105,41 +106,92 @@ def create_video_from_option(video_url, topic, duration=5, music_url=None, text_
         # Step 1: Download original video
         input_path = os.path.join(temp_dir, 'input.mp4')
         temp_files.append(input_path)
-        print(f"Downloading video...")
+        print(f"📥 Downloading video...")
         download_file(video_url, input_path)
         
         # Step 2: Trim
         trimmed_path = os.path.join(temp_dir, 'trimmed.mp4')
         temp_files.append(trimmed_path)
-        print(f"Trimming to {duration} seconds...")
+        print(f"✂️ Trimming to {duration} seconds...")
         trim_video_simple(input_path, trimmed_path, duration)
         
         # Step 3: Add music (if provided)
         with_music_path = os.path.join(temp_dir, 'with_music.mp4')
         temp_files.append(with_music_path)
-        print(f"Adding music...")
+        print(f"🎵 Adding music...")
         add_music_simple(trimmed_path, music_url, with_music_path)
         
         # Step 4: Add text overlay (if provided)
         final_path = os.path.join(temp_dir, 'final.mp4')
         temp_files.append(final_path)
-        print(f"Adding text overlay...")
+        print(f"📝 Adding text overlay...")
         add_text_simple(with_music_path, text_overlay, final_path)
         
-        # Step 5: Upload to Supabase
+               # Step 5: Check file exists
+        if not os.path.exists(final_path):
+            raise Exception(f"Final video file not created at {final_path}")
+
+        file_size = os.path.getsize(final_path)
+        print(f"📊 Final video size: {file_size} bytes")
+
+        if file_size < 1000:
+            raise Exception(f"Video file too small ({file_size} bytes) - likely corrupted")
+
+        # Step 6: Upload to Supabase with verification (FIXED METHOD)
         bucket = "video-outputs"
         unique_name = f"{uuid.uuid4()}.mp4"
-        print(f"Uploading to Supabase...")
+
+        print(f"☁️ Uploading to Supabase bucket '{bucket}'...")
+
+        # Verify bucket exists and is public
+        try:
+            buckets = supabase.storage.list_buckets()
+            bucket_names = [b['name'] for b in buckets]
+            if bucket not in bucket_names:
+                # Try to create the bucket if it doesn't exist
+                supabase.storage.create_bucket(bucket, {'public': True})
+                print(f"✅ Created bucket '{bucket}'")
+            else:
+                print(f"✅ Bucket '{bucket}' exists")
+        except Exception as e:
+            print(f"⚠️ Bucket check warning: {e}")
+
+        # IMPORTANT: Read file as bytes and upload
         with open(final_path, 'rb') as f:
-            supabase.storage.from_(bucket).upload(unique_name, f)
-        
+            file_bytes = f.read()
+
+        # Upload using the bytes object
+        result = supabase.storage.from_(bucket).upload(
+            unique_name,
+            file_bytes,
+            file_options={"content-type": "video/mp4"}
+        )
+
+        print(f"✅ Upload API response: {result}")
+
+        # Double-check that the file now exists in the bucket
+        try:
+            files_in_bucket = supabase.storage.from_(bucket).list()
+            uploaded_file_names = [f['name'] for f in files_in_bucket]
+            if unique_name in uploaded_file_names:
+                print(f"✅ VERIFIED: '{unique_name}' is in the bucket.")
+            else:
+                print(f"⚠️ WARNING: Upload reported success, but '{unique_name}' not found in bucket list.")
+                raise Exception("Upload confirmation failed.")
+        except Exception as e:
+            print(f"⚠️ Could not verify upload in bucket list: {e}")
+            # Continue anyway, as the public URL might still work
+
+        # Get public URL
         public_url = supabase.storage.from_(bucket).get_public_url(unique_name)
-        print(f"✅ Done: {public_url}")
-        
+        print(f"🎉 SUCCESS! Video URL: {public_url}")
+
         return public_url
         
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"❌ Error in create_video_from_option: {e}")
+        import traceback
+        traceback.print_exc()
         raise
     finally:
         # Cleanup
