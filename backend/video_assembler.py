@@ -247,3 +247,86 @@ def get_video_options(topic, max_options=6):
             'resolution': f"{video['width']}x{video['height']}"
         })
     return options
+
+def create_multi_clip_video(video_urls, topic, duration_per_clip=3, quality_settings=None):
+    """Combine multiple video clips into one"""
+    if not supabase:
+        raise RuntimeError("Supabase client not initialized")
+    
+    if len(video_urls) < 2:
+        raise Exception("Need at least 2 video URLs")
+    
+    temp_dir = tempfile.mkdtemp()
+    temp_files = []
+    clip_paths = []
+    
+    try:
+        # Download and trim each clip
+        for i, url in enumerate(video_urls[:3]):  # Max 3 clips
+            clip_input = os.path.join(temp_dir, f'clip_{i}_input.mp4')
+            clip_output = os.path.join(temp_dir, f'clip_{i}_trimmed.mp4')
+            temp_files.extend([clip_input, clip_output])
+            
+            download_file(url, clip_input)
+            trim_video_simple(clip_input, clip_output, duration_per_clip)
+            clip_paths.append(clip_output)
+        
+        # Create file list for concat
+        list_file = os.path.join(temp_dir, 'concat_list.txt')
+        with open(list_file, 'w') as f:
+            for clip in clip_paths:
+                f.write(f"file '{clip}'\n")
+        temp_files.append(list_file)
+        
+        # Concatenate videos
+        output_path = os.path.join(temp_dir, 'merged.mp4')
+        temp_files.append(output_path)
+        
+        cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", output_path]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"Merge failed: {result.stderr}")
+        
+        # Upload to Supabase
+        bucket = "video-outputs"
+        unique_name = f"multi_{uuid.uuid4()}.mp4"
+        
+        with open(output_path, 'rb') as f:
+            supabase.storage.from_(bucket).upload(unique_name, f, file_options={"content-type": "video/mp4"})
+        
+        return supabase.storage.from_(bucket).get_public_url(unique_name)
+        
+    finally:
+        for f in temp_files:
+            if os.path.exists(f):
+                os.unlink(f)
+        os.rmdir(temp_dir)
+        gc.collect()
+
+def add_ken_burns_effect(input_path, output_path, zoom=0.1):
+    """Add Ken Burns zoom effect to video"""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-vf", f"zoompan=z='min(1+{zoom},1.5)':d=1:x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':fps=30",
+        "-c:a", "copy",
+        output_path
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"Ken Burns effect failed: {result.stderr}")
+    return output_path
+
+def adjust_speed(input_path, output_path, speed_factor=0.5):
+    """Adjust video speed (slow motion or time lapse)"""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-vf", f"setpts={1/speed_factor}*PTS",
+        "-af", f"atempo={speed_factor}",
+        output_path
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"Speed adjustment failed: {result.stderr}")
+    return output_path
