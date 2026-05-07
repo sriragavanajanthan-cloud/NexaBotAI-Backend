@@ -2,6 +2,9 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from dotenv import load_dotenv
+load_dotenv()  # Load environment variables from .env file
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import datetime
@@ -45,7 +48,6 @@ def search_music():
     if request.method == 'OPTIONS':
         return '', 200
     
-    # Handle both GET and POST
     if request.method == 'GET':
         mood = request.args.get('mood', 'upbeat')
     else:
@@ -83,7 +85,8 @@ def health():
         "endpoints": ["/search-music", "/options", "/assemble", "/health"],
         "music_source": "Mixkit + SoundHelix",
         "total_tracks": LIBRARY_STATS['total_tracks'],
-        "moods_available": LIBRARY_STATS['moods']
+        "moods_available": LIBRARY_STATS['moods'],
+        "supabase_configured": bool(supabase)
     })
 
 @app.route('/options', methods=['POST', 'OPTIONS'])
@@ -117,9 +120,15 @@ def assemble():
     if duration < 2 or duration > 30:
         return jsonify({"error": "Duration must be between 2 and 30 seconds"}), 400
     
-    # Skip invalid music URLs
-    if music_url and (music_url.startswith('/') or 'invalid' in music_url):
+    if music_url and music_url.startswith('/'):
         music_url = None
+    
+    # Check Supabase configuration
+    if not supabase:
+        return jsonify({
+            "error": "Supabase not configured",
+            "note": "Set SUPABASE_URL and SUPABASE_SERVICE_KEY environment variables"
+        }), 500
     
     try:
         quality_settings = QUALITY_SETTINGS.get(quality, QUALITY_SETTINGS["standard"])
