@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+.Python
+venv/
+env/
+ENV/
+.env
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
+*.backup
+*.tmp
+*.log
+
+# Test files
+test_*.mp4
+test_*.py
+fix_*.py
+test_*.mp3
+output.mp4
+
+# Local config
+.env.local
+.env.*.local
