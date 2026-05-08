@@ -66,11 +66,22 @@ def add_text_simple(video_path, text, output_path):
         import shutil
         shutil.copy2(video_path, output_path)
         return output_path
-    
+    text_escaped = text.replace("'", "'\\''")
     cmd = ["ffmpeg", "-y", "-i", video_path,
-           "-vf", f"drawtext=text='{text}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:x=(w-text_w)/2:y=h-text_h-20",
-           "-c:a", "copy", output_path]
+           "-vf", f"drawtext=text='{text_escaped}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:x=(w-text_w)/2:y=h-text_h-20",
+           "-codec:a", "copy", output_path]
     subprocess.run(cmd, capture_output=True)
+    return output_path
+    if not text:
+        import shutil
+        shutil.copy2(video_path, output_path)
+        return output_path
+    
+    text_escaped = text.replace("'", "'\\\\''")
+    cmd = [FFMPEG, "-y", "-i", video_path,
+           "-vf", f"drawtext=text='{text_escaped}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:x=(w-text_w)/2:y=h-text_h-20",
+           "-codec:a", "copy", output_path]
+    subprocess.run(cmd, check=False, capture_output=True)
     return output_path
 
 def create_video_from_option(video_url, topic, duration=5, music_url=None, text_overlay=None, quality_settings=None):
@@ -181,9 +192,4 @@ def adjust_speed(input_path, output_path, speed_factor=0.5):
            "-vf", f"setpts={1/speed_factor}*PTS",
            "-af", f"atempo={speed_factor}", output_path]
     subprocess.run(cmd, check=False, capture_output=True)
-    return output_path
-def add_text_simple(video_path, text, output_path):
-    # Skip text overlay - just copy original
-    import shutil
-    shutil.copy2(video_path, output_path)
     return output_path

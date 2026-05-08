@@ -33,21 +33,6 @@ def add_music_simple(video_path, music_url, output_path):
         import shutil
         shutil.copy2(video_path, output_path)
         return output_path
-    music_path = tempfile.mktemp(suffix=".mp3")
-    try:
-        download_file(music_url, music_path)
-        probe_cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "default=noprint_wrappers=1:nokey=1", video_path]
-        has_audio = subprocess.run(probe_cmd, capture_output=True, text=True).stdout.strip()
-        if has_audio:
-            cmd = ["ffmpeg", "-y", "-i", video_path, "-i", music_path, "-filter_complex", "[1:a]volume=0.25[a1];[0:a][a1]amix=inputs=2:duration=first[aout]", "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", output_path]
-        else:
-            cmd = ["ffmpeg", "-y", "-i", video_path, "-i", music_path, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-shortest", output_path]
-        subprocess.run(cmd, capture_output=True, text=True)
-    finally:
-        if os.path.exists(music_path):
-            os.unlink(music_path)
-    return output_path
-
     
     music_path = tempfile.mktemp(suffix='.mp3')
     try:
@@ -67,10 +52,11 @@ def add_text_simple(video_path, text, output_path):
         shutil.copy2(video_path, output_path)
         return output_path
     
-    cmd = ["ffmpeg", "-y", "-i", video_path,
-           "-vf", f"drawtext=text='{text}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:x=(w-text_w)/2:y=h-text_h-20",
-           "-c:a", "copy", output_path]
-    subprocess.run(cmd, capture_output=True)
+    text_escaped = text.replace("'", "'\\\\''")
+    cmd = [FFMPEG, "-y", "-i", video_path,
+           "-vf", f"drawtext=text='{text_escaped}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:x=(w-text_w)/2:y=h-text_h-20",
+           "-codec:a", "copy", output_path]
+    subprocess.run(cmd, check=False, capture_output=True)
     return output_path
 
 def create_video_from_option(video_url, topic, duration=5, music_url=None, text_overlay=None, quality_settings=None):
@@ -181,9 +167,4 @@ def adjust_speed(input_path, output_path, speed_factor=0.5):
            "-vf", f"setpts={1/speed_factor}*PTS",
            "-af", f"atempo={speed_factor}", output_path]
     subprocess.run(cmd, check=False, capture_output=True)
-    return output_path
-def add_text_simple(video_path, text, output_path):
-    # Skip text overlay - just copy original
-    import shutil
-    shutil.copy2(video_path, output_path)
     return output_path
