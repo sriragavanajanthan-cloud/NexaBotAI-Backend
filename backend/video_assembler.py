@@ -197,3 +197,7 @@ def add_text_simple(video_path, text, output_path):
     import shutil
     shutil.copy2(video_path, output_path)
     return output_path
+
+# Ensure API key is set
+if 'PIXABAY_API_KEY' not in dir():
+    PIXABAY_API_KEY = "55575290-329752efa37512543a3df3950"
