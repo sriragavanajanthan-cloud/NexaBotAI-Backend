@@ -169,11 +169,11 @@ def create_multi_clip_video(video_urls, topic, duration_per_clip=3, quality_sett
         os.rmdir(temp_dir)
         gc.collect()
 
-def add_ken_burns_effect(input_path, output_path, zoom=0.1):
+def add_ken_burns_effect(input_path, output_path, zoom=0.05):
     cmd = ["ffmpeg", "-y", "-i", input_path,
-           "-vf", f"zoompan=z='min(1+{zoom},1.5)':d=1:x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':fps=30",
+           "-vf", f"zoompan=z='1+{zoom}':d=1:x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':fps=30",
            "-c:a", "copy", output_path]
-    subprocess.run(cmd, check=False, capture_output=True)
+    subprocess.run(cmd, capture_output=True)
     return output_path
 
 def adjust_speed(input_path, output_path, speed_factor=0.5):
