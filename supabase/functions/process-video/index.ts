@@ -1,26 +1,20 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 
-interface VideoRequest {
-  video_url: string
-  duration: number
-  music_url?: string
-  text_overlay?: string
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'authorization, content-type, apikey, x-client-info',
+  'Access-Control-Max-Age': '86400',
 }
 
 serve(async (req: Request) => {
-  // Handle CORS
+  // Handle preflight OPTIONS request
   if (req.method === 'OPTIONS') {
-    return new Response('ok', {
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      },
-    })
+    return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    const { video_url, duration, music_url, text_overlay }: VideoRequest = await req.json()
+    const { video_url, duration, music_url, text_overlay } = await req.json()
 
     if (!video_url) {
       throw new Error('video_url is required')
@@ -29,14 +23,17 @@ serve(async (req: Request) => {
     console.log(`Processing video: ${video_url}`)
     console.log(`Duration: ${duration}s`)
 
-    // Call your Render API to process the video
+    // Call your Render API
     const RENDER_API_URL = Deno.env.get('RENDER_API_URL') || 'https://nexabot-video-api.onrender.com'
     
     const response = await fetch(`${RENDER_API_URL}/assemble`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'User-Agent': 'Supabase-Edge-Function'
+      },
       body: JSON.stringify({
-        topic: "edge_function_video",
+        topic: "edge_function",
         video_url: video_url,
         duration: duration,
         quality: "standard",
@@ -58,7 +55,7 @@ serve(async (req: Request) => {
         status: 200,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
+          ...corsHeaders
         },
       }
     )
@@ -74,7 +71,7 @@ serve(async (req: Request) => {
         status: 500,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
+          ...corsHeaders
         },
       }
     )
