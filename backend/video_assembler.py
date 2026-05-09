@@ -119,6 +119,16 @@ def create_video_from_option(video_url, topic, duration=5, music_url=None, text_
             pass
         gc.collect()
 
+
+def get_fallback_videos(topic):
+    """Return fallback videos when API fails"""
+    return [
+        {'url': 'https://cdn.pixabay.com/video/2022/03/18/111204-689949818_medium.mp4', 'duration': 10, 'tags': 'nature'},
+        {'url': 'https://cdn.pixabay.com/video/2021/09/11/88207-602915574_medium.mp4', 'duration': 8, 'tags': 'sunset'},
+        {'url': 'https://cdn.pixabay.com/video/2023/04/28/160767-822213540_medium.mp4', 'duration': 12, 'tags': 'ocean'}
+    ]
+
+
 def get_video_options(topic, max_options=6):
     words = re.findall(r'\b[a-zA-Z]{3,}\b', topic.lower())
     stop_words = {'the', 'and', 'for', 'with', 'that', 'this', 'from', 'have', 'are', 'was', 'were', 'been', 'can', 'will', 'would', 'could', 'should'}
