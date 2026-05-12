@@ -1,12 +1,9 @@
-import requests
 import subprocess
 import os
 import tempfile
 import uuid
+import requests
 import re
-from video_sources import search_videos
-import re
-from video_sources import search_videos
 import gc
 from supabase import create_client
 
@@ -133,9 +130,6 @@ def get_fallback_videos(topic):
 
 
 def get_video_options(topic, max_options=6):
-    return search_videos(topic, max_options)
-
-def get_video_options_old(topic, max_options=6):
     words = re.findall(r'\b[a-zA-Z]{3,}\b', topic.lower())
     stop_words = {'the', 'and', 'for', 'with', 'that', 'this', 'from', 'have', 'are', 'was', 'were', 'been', 'can', 'will', 'would', 'could', 'should'}
     keywords = [w for w in words if w not in stop_words]
@@ -207,51 +201,3 @@ def add_text_simple(video_path, text, output_path):
 # Ensure API key is set
 if 'PIXABAY_API_KEY' not in dir():
     PIXABAY_API_KEY = "55575290-329752efa37512543a3df3950"
-
-def create_multi_clip_video(video_urls, topic, duration_per_clip=3, quality_settings=None):
-    if not supabase:
-        raise RuntimeError("Supabase client not initialized")
-    
-    temp_dir = tempfile.mkdtemp()
-    clip_paths = []
-    
-    try:
-        for i, url in enumerate(video_urls[:2]):
-            input_path = os.path.join(temp_dir, f'input_{i}.mp4')
-            output_path = os.path.join(temp_dir, f'clip_{i}.mp4')
-            download_file(url, input_path)
-            cmd = [FFMPEG_PATH, "-y", "-i", input_path, "-t", str(duration_per_clip), "-c", "copy", output_path]
-            subprocess.run(cmd, capture_output=True)
-            if os.path.exists(output_path):
-                clip_paths.append(output_path)
-        
-        if len(clip_paths) < 2:
-            raise Exception("Failed to create clips")
-        
-        concat_file = os.path.join(temp_dir, 'concat.txt')
-        with open(concat_file, 'w') as f:
-            for clip in clip_paths:
-                f.write(f"file '{clip}'\n")
-        
-        output_path = os.path.join(temp_dir, 'merged.mp4')
-        cmd = [FFMPEG_PATH, "-y", "-f", "concat", "-safe", "0", "-i", concat_file, "-c", "copy", output_path]
-        subprocess.run(cmd, capture_output=True)
-        
-        if not os.path.exists(output_path):
-            raise Exception("Merge failed")
-        
-        bucket = "video-outputs"
-        unique_name = f"multi_{uuid.uuid4()}.mp4"
-        with open(output_path, 'rb') as f:
-            supabase.storage.from_(bucket).upload(unique_name, f, file_options={"content-type": "video/mp4"})
-        return supabase.storage.from_(bucket).get_public_url(unique_name)
-        
-    finally:
-        for clip in clip_paths:
-            if os.path.exists(clip):
-                os.unlink(clip)
-        try:
-            os.rmdir(temp_dir)
-        except:
-            pass
-FFMPEG_PATH = 'ffmpeg'

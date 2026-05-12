@@ -13,6 +13,7 @@ import requests
 import uuid
 from supabase import create_client
 from video_assembler import get_video_options, create_video_from_option, create_multi_clip_video
+from video_search import search_by_mood, search_with_smart_query
 
 app = Flask(__name__)
 
@@ -116,10 +117,19 @@ def assemble_multi():
     if not supabase:
         return jsonify({"error": "Supabase not configured"}), 500
     try:
+        # Clean up temp dirs first
+        import tempfile
+        tempfile.tempdir = None
         video_path = create_multi_clip_video(video_urls=video_urls, topic="multi_clip", duration_per_clip=duration_per_clip)
         return jsonify({"video_url": video_path, "message": f"Multi-clip video created with {len(video_urls)} clips"})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        import time
+        time.sleep(1)
+        try:
+            video_path = create_multi_clip_video(video_urls=video_urls, topic="multi_clip", duration_per_clip=duration_per_clip)
+            return jsonify({"video_url": video_path, "message": f"Multi-clip video created with {len(video_urls)} clips"})
+        except Exception as e2:
+            return jsonify({"error": str(e2)}), 500
 
 @app.route('/add-effect', methods=['POST', 'OPTIONS'])
 def add_effect():
@@ -192,6 +202,33 @@ def cleanup():
         except Exception:
             continue
     return str(deleted), 200, {'Content-Type': 'text/plain'}
+
+
+
+@app.route('/search', methods=['POST', 'OPTIONS'])
+def smart_search():
+    if request.method == 'OPTIONS':
+        return '', 200
+    
+    data = request.json
+    query = data.get('query', '')
+    mood = data.get('mood', None)
+    max_results = data.get('max_results', 8)
+    
+    if not query and not mood:
+        return jsonify({"error": "Provide query or mood"}), 400
+    
+    if mood:
+        videos = search_by_mood(mood, max_results)
+    else:
+        videos = search_with_smart_query(query, max_results)
+    
+    return jsonify({
+        "videos": videos,
+        "count": len(videos),
+        "query": query or mood
+    })
+
 
 if __name__ == '__main__':
     app.run(port=5001, debug=False, threaded=False)
